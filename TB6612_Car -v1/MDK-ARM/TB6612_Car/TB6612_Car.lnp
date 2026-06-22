@@ -1,0 +1,25 @@
+--cpu Cortex-M3
+"tb6612_car\startup_stm32f103xb.o"
+"tb6612_car\main.o"
+"tb6612_car\gpio.o"
+"tb6612_car\tim.o"
+"tb6612_car\stm32f1xx_it.o"
+"tb6612_car\stm32f1xx_hal_msp.o"
+"tb6612_car\stm32f1xx_hal_gpio_ex.o"
+"tb6612_car\stm32f1xx_hal_tim.o"
+"tb6612_car\stm32f1xx_hal_tim_ex.o"
+"tb6612_car\stm32f1xx_hal.o"
+"tb6612_car\stm32f1xx_hal_rcc.o"
+"tb6612_car\stm32f1xx_hal_rcc_ex.o"
+"tb6612_car\stm32f1xx_hal_gpio.o"
+"tb6612_car\stm32f1xx_hal_dma.o"
+"tb6612_car\stm32f1xx_hal_cortex.o"
+"tb6612_car\stm32f1xx_hal_pwr.o"
+"tb6612_car\stm32f1xx_hal_flash.o"
+"tb6612_car\stm32f1xx_hal_flash_ex.o"
+"tb6612_car\stm32f1xx_hal_exti.o"
+"tb6612_car\system_stm32f1xx.o"
+--strict --scatter "TB6612_Car\TB6612_Car.sct"
+--summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list "TB6612_Car.map" -o TB6612_Car\TB6612_Car.axf
