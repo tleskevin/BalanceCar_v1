@@ -61,7 +61,7 @@ void SystemClock_Config(void);
    你前面說會往前衝，所以這裡不要用 -0.2f。
    先歸零。
 */
-#define BALANCE_OFFSET_ANGLE  -0.2f
+#define BALANCE_OFFSET_ANGLE  -0.3f
 
 /* =========================================================
    PWM 參數
