@@ -61,13 +61,13 @@ void SystemClock_Config(void);
    你前面說會往前衝，所以這裡不要用 -0.2f。
    先歸零。
 */
-#define BALANCE_OFFSET_ANGLE  -0.3f
+#define BALANCE_OFFSET_ANGLE  -0.1f
 
 /* =========================================================
    PWM 參數
    ========================================================= */
 
-#define PWM_MAX               460
+#define PWM_MAX               400
 #define PWM_MIN_START         48
 #define PWM_DEAD_ZONE         1
 
@@ -84,15 +84,15 @@ void SystemClock_Config(void);
 /*
    P：角度偏多少，馬達補多少。
 */
-#define UPRIGHT_KP_LOW        13.0f
-#define UPRIGHT_KP_MID        18.0f
-#define UPRIGHT_KP_HIGH       28.0f
+#define UPRIGHT_KP_LOW        11.0f
+#define UPRIGHT_KP_MID        16.0f
+#define UPRIGHT_KP_HIGH       24.0f
 
 /*
    I：長時間偏同一邊時，慢慢修正。
    不要太大，否則會暴衝。
 */
-#define UPRIGHT_KI            8.0f
+#define UPRIGHT_KI            9.0f
 
 /*
    I 積分最大值。
@@ -115,9 +115,9 @@ void SystemClock_Config(void);
 /*
    D：阻尼，抑制倒下速度與過衝。
 */
-#define UPRIGHT_KD_LOW        0.90f
-#define UPRIGHT_KD_MID        1.05f
-#define UPRIGHT_KD_HIGH       1.20f
+#define UPRIGHT_KD_LOW        2.20f
+#define UPRIGHT_KD_MID        2.60f
+#define UPRIGHT_KD_HIGH       3.00f
 
 #define D_OUTPUT_LIMIT        140.0f
 
