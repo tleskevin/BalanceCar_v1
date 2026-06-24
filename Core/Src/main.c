@@ -2,18 +2,15 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : STM32F103C8T6 Balance Car - PID Angle Version
+  * @brief          : STM32F103C8T6 Balance Car - Stable PD Test Version
   *
-  * 功能：
-  * 1. MPU6050 讀取角度
-  * 2. 開機校正直立角
-  * 3. 開機校正 GyroX 零點
-  * 4. 修正 SENSOR_DIR
-  * 5. 角度 PID：KP + KI + KD
-  * 6. KI 積分限制，避免暴衝
-  * 7. 小角度立即做動
-  * 8. 防過衝輸出限制
-  * 9. TB6612 馬達控制
+  * 重點：
+  * 1. 先關閉 KI，避免積分造成暴衝
+  * 2. 使用 P + 小 KD 測試基本平衡
+  * 3. 保留 GyroX 校正
+  * 4. 保留小角度啟動 PWM
+  * 5. 保留過零抑制
+  * 6. 適合「調大還是很快倒」時重新確認控制方向與力道
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -39,90 +36,90 @@ void SystemClock_Config(void);
 
 /*
    感測方向。
-   你目前已經把重心方向調對，所以保持 1。
+   目前你已經確認重心方向正確，保持 1。
 */
 #define SENSOR_DIR            1
 
 /*
-   平衡輸出方向。
-   重心往前倒，輪子要往前。
-   重心往後倒，輪子要往後。
+   平衡方向。
+   離地測試：
+   車身往前倒，輪子要往前轉。
+   車身往後倒，輪子要往後轉。
+   如果相反，才改成 -1。
 */
 #define BALANCE_DIR           1
 
 /*
    Gyro 阻尼方向。
-   如果輪子方向正確，但車子越救越甩，再改成 1。
+   如果這版 P + KD 比沒有 KD 更快倒，再把這個改成 1。
 */
 #define GYRO_DIR              -1
 
 /*
-   重要：
-   你前面說會往前衝，所以這裡不要用 -0.2f。
    先歸零。
+   等能站住後，再用 0.1f / -0.1f 修正慢慢前衝或後退。
 */
-#define BALANCE_OFFSET_ANGLE  -0.1f
+#define BALANCE_OFFSET_ANGLE  0.0f
 
 /* =========================================================
    PWM 參數
    ========================================================= */
 
-#define PWM_MAX               400
-#define PWM_MIN_START         48
+#define PWM_MAX               600
+#define PWM_MIN_START         65
 #define PWM_DEAD_ZONE         1
 
 #define FALL_ANGLE            34.0f
 #define ANGLE_LIMIT           12.0f
 
-#define MIN_START_ANGLE       0.25f
-#define PWM_RAMP_STEP         26
+#define MIN_START_ANGLE       0.20f
+
+/*
+   60 太衝，26 又可能救太慢。
+   先用 45。
+*/
+#define PWM_RAMP_STEP         45
 
 /* =========================================================
-   PID 參數
+   PD / PID 參數
    ========================================================= */
 
 /*
-   P：角度偏多少，馬達補多少。
+   P：主要救車力道。
 */
-#define UPRIGHT_KP_LOW        11.0f
-#define UPRIGHT_KP_MID        16.0f
-#define UPRIGHT_KP_HIGH       24.0f
+#define UPRIGHT_KP_LOW        18.0f
+#define UPRIGHT_KP_MID        26.0f
+#define UPRIGHT_KP_HIGH       38.0f
 
 /*
-   I：長時間偏同一邊時，慢慢修正。
-   不要太大，否則會暴衝。
+   先關閉 KI。
+   車子很快倒時，不要用 KI。
 */
-#define UPRIGHT_KI            9.0f
-
-/*
-   I 積分最大值。
-   angle_integral 單位大約是 degree * second。
-*/
-#define INTEGRAL_LIMIT        8.0f
-
-/*
-   I 輸出最大限制。
-   避免積分項突然推太大。
-*/
-#define I_OUTPUT_LIMIT        55.0f
-
-/*
-   只有小角度附近才允許積分。
-   大角度倒下時不積分，避免越積越大。
-*/
+#define UPRIGHT_KI            0.0f
+#define INTEGRAL_LIMIT        0.0f
+#define I_OUTPUT_LIMIT        0.0f
 #define INTEGRAL_ENABLE_ANGLE 5.0f
 
 /*
-   D：阻尼，抑制倒下速度與過衝。
+   D：阻尼。
+   先小一點，不要一開始用太大。
 */
-#define UPRIGHT_KD_LOW        2.20f
-#define UPRIGHT_KD_MID        2.60f
-#define UPRIGHT_KD_HIGH       3.00f
+#define UPRIGHT_KD_LOW        0.35f
+#define UPRIGHT_KD_MID        0.55f
+#define UPRIGHT_KD_HIGH       0.75f
 
-#define D_OUTPUT_LIMIT        140.0f
+#define D_OUTPUT_LIMIT        100.0f
 
-#define OUTPUT_FILTER_ALPHA   0.16f
-#define ZERO_CROSS_DAMPING    0.35f
+/*
+   輸出濾波。
+   0 會太直接，容易瞬間衝。
+*/
+#define OUTPUT_FILTER_ALPHA   0.08f
+
+/*
+   過零時不要直接砍成 0，保留一點輸出比較順。
+*/
+#define ZERO_CROSS_DAMPING    0.25f
 
 #define CONTROL_PERIOD_MS     5
 
@@ -284,7 +281,6 @@ int main(void)
 
             /*
                倒下保護。
-               倒下時一定要清掉 KI，不然下次會突然暴衝。
             */
             if (angle_error > FALL_ANGLE || angle_error < -FALL_ANGLE)
             {
@@ -296,7 +292,6 @@ int main(void)
 
             /*
                角度過零抑制。
-               車被救過直立點時，降低舊輸出，避免繼續推到另一邊。
             */
             if ((last_angle_error > 0.0f && angle_error < 0.0f) ||
                 (last_angle_error < 0.0f && angle_error > 0.0f))
@@ -305,9 +300,6 @@ int main(void)
                 left_pwm_output = (int)((float)left_pwm_output * ZERO_CROSS_DAMPING);
                 right_pwm_output = (int)((float)right_pwm_output * ZERO_CROSS_DAMPING);
 
-                /*
-                   過零時也削弱積分，避免 KI 繼續往舊方向推。
-                */
                 angle_integral *= 0.35f;
             }
 
@@ -315,6 +307,7 @@ int main(void)
 
             /*
                角度 PID。
+               目前 KI = 0，所以實際是 PD。
             */
             balance_pwm = Upright_PID(angle_error, gyro_rate);
 
@@ -401,9 +394,7 @@ int main(void)
 
 /*
    角度 PID 控制。
-   P：救角度
-   I：修正長時間偏一邊
-   D：阻尼，抑制過衝
+   目前 KI = 0，所以實際上是 PD。
 */
 int Upright_PID(float error_now, float gyro_now)
 {
@@ -422,7 +413,7 @@ int Upright_PID(float error_now, float gyro_now)
     abs_error = Abs_Float(angle_error_limited);
 
     /*
-       小角度柔和，中角度補強，大角度救車。
+       小角度、中角度、大角度使用不同 Kp/Kd。
     */
     if (abs_error > 6.0f)
     {
@@ -441,12 +432,12 @@ int Upright_PID(float error_now, float gyro_now)
     }
 
     /*
-       如果角度正在回正，降低 P 項，避免救過頭。
+       如果角度正在回正，降低 P，避免救過頭。
     */
     if ((error_now > 0.0f && gyro_now < 0.0f) ||
         (error_now < 0.0f && gyro_now > 0.0f))
     {
-        kp_now *= 0.55f;
+        kp_now *= 0.60f;
     }
 
     /*
@@ -456,36 +447,44 @@ int Upright_PID(float error_now, float gyro_now)
 
     /*
        I 項。
-       只有角度不太大時才積分。
-       大角度時積分慢慢釋放，避免倒下前越積越多。
+       目前 UPRIGHT_KI = 0，所以不會作用。
+       保留程式架構，之後能站住後再慢慢加。
     */
-    if (abs_error < INTEGRAL_ENABLE_ANGLE)
+    if (UPRIGHT_KI > 0.0f)
     {
-        angle_integral += angle_error_limited * dt;
+        if (abs_error < INTEGRAL_ENABLE_ANGLE)
+        {
+            angle_integral += angle_error_limited * dt;
+        }
+        else
+        {
+            angle_integral *= 0.92f;
+        }
+
+        if (angle_integral > INTEGRAL_LIMIT)
+        {
+            angle_integral = INTEGRAL_LIMIT;
+        }
+        else if (angle_integral < -INTEGRAL_LIMIT)
+        {
+            angle_integral = -INTEGRAL_LIMIT;
+        }
+
+        i_out = UPRIGHT_KI * angle_integral;
+
+        if (i_out > I_OUTPUT_LIMIT)
+        {
+            i_out = I_OUTPUT_LIMIT;
+        }
+        else if (i_out < -I_OUTPUT_LIMIT)
+        {
+            i_out = -I_OUTPUT_LIMIT;
+        }
     }
     else
     {
-        angle_integral *= 0.92f;
-    }
-
-    if (angle_integral > INTEGRAL_LIMIT)
-    {
-        angle_integral = INTEGRAL_LIMIT;
-    }
-    else if (angle_integral < -INTEGRAL_LIMIT)
-    {
-        angle_integral = -INTEGRAL_LIMIT;
-    }
-
-    i_out = UPRIGHT_KI * angle_integral;
-
-    if (i_out > I_OUTPUT_LIMIT)
-    {
-        i_out = I_OUTPUT_LIMIT;
-    }
-    else if (i_out < -I_OUTPUT_LIMIT)
-    {
-        i_out = -I_OUTPUT_LIMIT;
+        angle_integral = 0.0f;
+        i_out = 0.0f;
     }
 
     /*
@@ -505,23 +504,23 @@ int Upright_PID(float error_now, float gyro_now)
     output = (int)(p_out + i_out + d_out);
 
     /*
-       小角度限制輸出，避免 KI + P 一起造成過衝。
+       小角度限制輸出，避免瞬間過衝。
     */
     if (abs_error < 0.8f)
     {
-        output = Limit_PWM(output, 60);
+        output = Limit_PWM(output, 70);
     }
     else if (abs_error < 1.8f)
     {
-        output = Limit_PWM(output, 120);
+        output = Limit_PWM(output, 140);
     }
     else if (abs_error < 3.5f)
     {
-        output = Limit_PWM(output, 220);
+        output = Limit_PWM(output, 260);
     }
     else if (abs_error < 6.0f)
     {
-        output = Limit_PWM(output, 340);
+        output = Limit_PWM(output, 420);
     }
     else
     {

@@ -3,7 +3,7 @@
 <title>Static Call Graph - [TB6612_Car\TB6612_Car.axf]</title></head>
 <body><HR>
 <H1>Static Call Graph for image TB6612_Car\TB6612_Car.axf</H1><HR>
-<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060300: Last Updated: Tue Jun 23 22:32:40 2026
+<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060300: Last Updated: Tue Jun 23 23:22:35 2026
 <BR><P>
 <H3>Maximum Stack Usage =        192 bytes + Unknown(Functions without stacksize, Cycles, Untraceable Function Pointers)</H3><H3>
 Call chain for Maximum Stack Depth:</H3>
@@ -864,7 +864,7 @@ Global Symbols
 <BR>[Called By]<UL><LI><a href="#[7b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;HAL_TIM_PWM_ConfigChannel
 </UL>
 
-<P><STRONG><a name="[92]"></a>Upright_PID</STRONG> (Thumb, 286 bytes, Stack size 40 bytes, main.o(i.Upright_PID))
+<P><STRONG><a name="[92]"></a>Upright_PID</STRONG> (Thumb, 218 bytes, Stack size 40 bytes, main.o(i.Upright_PID))
 <BR><BR>[Stack]<UL><LI>Max Depth = 56<LI>Call Chain = Upright_PID &rArr; Limit_Float
 </UL>
 <BR>[Calls]<UL><LI><a href="#[8f]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Limit_PWM
@@ -940,6 +940,7 @@ Global Symbols
 <LI><a href="#[4d]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Balance_Calibrate
 <LI><a href="#[93]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Abs_Float
 <LI><a href="#[52]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;atan2f
+<LI><a href="#[97]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__ARM_scalbnf
 <LI><a href="#[53]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__aeabi_fmul
 <LI><a href="#[9b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__aeabi_ui2f
 <LI><a href="#[51]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__aeabi_i2f
@@ -1092,7 +1093,8 @@ Global Symbols
 <P><STRONG><a name="[97]"></a>__ARM_scalbnf</STRONG> (Thumb, 76 bytes, Stack size 0 bytes, scalbnf.o(x$fpl$scalbnf))
 <BR><BR>[Calls]<UL><LI><a href="#[a1]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__fpl_fcheck_NaN1
 </UL>
-<BR>[Called By]<UL><LI><a href="#[96]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__mathlib_flt_underflow
+<BR>[Called By]<UL><LI><a href="#[44]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;main
+<LI><a href="#[96]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__mathlib_flt_underflow
 </UL>
 
 <P><STRONG><a name="[ad]"></a>__fpl_cmpreturn</STRONG> (Thumb, 48 bytes, Stack size 0 bytes, trapv.o(x$fpl$trapveneer))
