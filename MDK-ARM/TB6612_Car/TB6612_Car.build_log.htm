@@ -28,13 +28,16 @@ Project File Date:  06/23/2026
 *** Using Compiler 'V5.06 update 3 (build 300)', folder: 'C:\Users\TUF\AppData\Local\Keil_v5\ARM\ARMCC\Bin'
 Build target 'TB6612_Car'
 compiling main.c...
-../Core/Src/main.c(894): warning:  #1-D: last line of file ends without a newline
-  #endif
-../Core/Src/main.c: 1 warning, 0 errors
+../Core/Src/main.c(115): warning:  #223-D: function "abs" declared implicitly
+      
+_HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, abs(left_pwm));
+../Core/Src/main.c(136): warning:  #1-D: last line of file ends without a newline
+  void Error_Handler(void) { while(1); }
+../Core/Src/main.c: 2 warnings, 0 errors
 linking...
-Program Size: Code=11694 RO-data=310 RW-data=112 ZI-data=1952  
+Program Size: Code=4184 RO-data=276 RW-data=36 ZI-data=1932  
 FromELF: creating hex file...
-"TB6612_Car\TB6612_Car.axf" - 0 Error(s), 1 Warning(s).
+"TB6612_Car\TB6612_Car.axf" - 0 Error(s), 2 Warning(s).
 
 <h2>Software Packages used:</h2>
 

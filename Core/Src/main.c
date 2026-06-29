@@ -2,15 +2,7 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : STM32F103C8T6 Balance Car - Stable PD Test Version
-  *
-  * 重點：
-  * 1. 先關閉 KI，避免積分造成暴衝
-  * 2. 使用 P + 小 KD 測試基本平衡
-  * 3. 保留 GyroX 校正
-  * 4. 保留小角度啟動 PWM
-  * 5. 保留過零抑制
-  * 6. 適合「調大還是很快倒」時重新確認控制方向與力道
+  * @brief          : STM32F103C8T6 Line Tracking Car - Final Optimized
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -20,875 +12,125 @@
 #include "tim.h"
 #include "gpio.h"
 
-#include <math.h>
-#include <stdlib.h>
-
 void SystemClock_Config(void);
+void Error_Handler(void);
 
 /* USER CODE BEGIN PD */
 
-/* =========================================================
-   方向設定
-   ========================================================= */
-
+/* 1. ???? */
 #define LEFT_MOTOR_DIR        1
 #define RIGHT_MOTOR_DIR       1
 
-/*
-   感測方向。
-   目前你已經確認重心方向正確，保持 1。
-*/
-#define SENSOR_DIR            1
+/* 2. PWM ???? (????) */
+#define PWM_MAX               800
+#define PWM_MIN_LIMIT         75    // ?? ?????????????
 
-/*
-   平衡方向。
-   離地測試：
-   車身往前倒，輪子要往前轉。
-   車身往後倒，輪子要往後轉。
-   如果相反，才改成 -1。
-*/
-#define BALANCE_DIR           1
-
-/*
-   Gyro 阻尼方向。
-   如果這版 P + KD 比沒有 KD 更快倒，再把這個改成 1。
-*/
-#define GYRO_DIR              -1
-
-/*
-   先歸零。
-   等能站住後，再用 0.1f / -0.1f 修正慢慢前衝或後退。
-*/
-#define BALANCE_OFFSET_ANGLE  0.0f
-
-/* =========================================================
-   PWM 參數
-   ========================================================= */
-
-#define PWM_MAX               600
-#define PWM_MIN_START         65
-#define PWM_DEAD_ZONE         1
-
-#define FALL_ANGLE            34.0f
-#define ANGLE_LIMIT           12.0f
-
-#define MIN_START_ANGLE       0.20f
-
-/*
-   60 太衝，26 又可能救太慢。
-   先用 45。
-*/
-#define PWM_RAMP_STEP         45
-
-/* =========================================================
-   PD / PID 參數
-   ========================================================= */
-
-/*
-   P：主要救車力道。
-*/
-#define UPRIGHT_KP_LOW        18.0f
-#define UPRIGHT_KP_MID        26.0f
-#define UPRIGHT_KP_HIGH       38.0f
-
-/*
-   先關閉 KI。
-   車子很快倒時，不要用 KI。
-*/
-#define UPRIGHT_KI            0.0f
-#define INTEGRAL_LIMIT        0.0f
-#define I_OUTPUT_LIMIT        0.0f
-#define INTEGRAL_ENABLE_ANGLE 5.0f
-
-/*
-   D：阻尼。
-   先小一點，不要一開始用太大。
-*/
-#define UPRIGHT_KD_LOW        0.35f
-#define UPRIGHT_KD_MID        0.55f
-#define UPRIGHT_KD_HIGH       0.75f
-
-#define D_OUTPUT_LIMIT        100.0f
-
-/*
-   輸出濾波。
-   0 會太直接，容易瞬間衝。
-*/
-#define OUTPUT_FILTER_ALPHA   0.08f
-
-/*
-   過零時不要直接砍成 0，保留一點輸出比較順。
-*/
-#define ZERO_CROSS_DAMPING    0.25f
-
-#define CONTROL_PERIOD_MS     5
+#define SPEED_BASE            180 //???)
+#define SPEED_CORRECT_FAST    250
+#define SPEED_CORRECT_SLOW    -50//(???????)
+#define SPEED_BLIND_WALK      100   // ????????
 
 /* USER CODE END PD */
 
-/* USER CODE BEGIN PV */
-
-/* MPU6050 */
-uint8_t mpu_check = 0;
-uint8_t mpu_data = 0;
-uint8_t imu_buf[14];
-
-int16_t AccX = 0;
-int16_t AccY = 0;
-int16_t AccZ = 0;
-int16_t GyroX = 0;
-int16_t GyroY = 0;
-int16_t GyroZ = 0;
-
-HAL_StatusTypeDef mpu_who_status;
-HAL_StatusTypeDef mpu_wakeup_status;
-HAL_StatusTypeDef mpu_read_status;
-
-/* Angle */
-float acc_angle = 0.0f;
-float gyro_rate = 0.0f;
-float gyro_x_bias = 0.0f;
-
-float angle = 0.0f;
-float target_angle = 0.0f;
-float angle_error = 0.0f;
-float last_angle_error = 0.0f;
-float angle_error_limited = 0.0f;
-
-/* PID */
-float angle_integral = 0.0f;
-
-/* PWM */
-int balance_pwm = 0;
-float balance_pwm_filter = 0.0f;
-
 int left_pwm_cmd = 0;
 int right_pwm_cmd = 0;
-
 int left_pwm_output = 0;
 int right_pwm_output = 0;
+uint8_t sensor_left_val = 0;
+uint8_t sensor_right_val = 0;
 
-/* Time */
-uint32_t last_time = 0;
-uint32_t now_time = 0;
-uint32_t last_control_tick = 0;
-float dt = 0.005f;
-
-/* USER CODE END PV */
-
-/* USER CODE BEGIN PFP */
-
-uint8_t MPU6050_Init(void);
-uint8_t MPU6050_Read_All(void);
-void Balance_Calibrate(void);
-
-int Upright_PID(float error_now, float gyro_now);
-
+/* Function Prototypes */
 void Motor_Set(int left_pwm, int right_pwm);
-
 int Limit_PWM(int value, int max);
-float Limit_Float(float value, float max);
-float Abs_Float(float value);
 int Ramp_PWM(int target_pwm, int *current_pwm);
-void Reset_Control_State(void);
-
-/* USER CODE END PFP */
+void Line_Tracking_Control(void);
 
 int main(void)
 {
     HAL_Init();
     SystemClock_Config();
-
     MX_GPIO_Init();
-    MX_I2C1_Init();
     MX_TIM2_Init();
+    MX_I2C1_Init(); 
 
-    /*
-       PWM 接線：
-       TIM2_CH3 / PA2 -> 右輪 PWM
-       TIM2_CH4 / PA3 -> 左輪 PWM
-    */
     HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
     HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
 
     Motor_Set(0, 0);
-    HAL_Delay(500);
-
-    HAL_I2C_DeInit(&hi2c1);
-    HAL_Delay(10);
-    MX_I2C1_Init();
-    HAL_Delay(50);
-
-    if (MPU6050_Init() != 0)
-    {
-        Motor_Set(0, 0);
-
-        while (1)
-        {
-            HAL_Delay(100);
-        }
-    }
-
-    /*
-       開機時請扶正車身，不要晃動。
-       這裡會校正直立角與 GyroX 零點。
-    */
-    Balance_Calibrate();
-
-    Reset_Control_State();
-
-    last_time = HAL_GetTick();
-    last_control_tick = HAL_GetTick();
+    HAL_Delay(1000); 
 
     while (1)
     {
-        if (HAL_GetTick() - last_control_tick < CONTROL_PERIOD_MS)
-        {
-            continue;
-        }
+        Line_Tracking_Control();
+        
+        /* ??????? */
+        if (left_pwm_cmd > 0 && left_pwm_cmd < PWM_MIN_LIMIT) left_pwm_cmd = PWM_MIN_LIMIT;
+        if (right_pwm_cmd > 0 && right_pwm_cmd < PWM_MIN_LIMIT) right_pwm_cmd = PWM_MIN_LIMIT;
 
-        last_control_tick = HAL_GetTick();
+        left_pwm_cmd = Ramp_PWM(left_pwm_cmd, &left_pwm_output);
+        right_pwm_cmd = Ramp_PWM(right_pwm_cmd, &right_pwm_output);
 
-        if (MPU6050_Read_All() == 0)
-        {
-            now_time = HAL_GetTick();
-            dt = (now_time - last_time) / 1000.0f;
-            last_time = now_time;
-
-            if (dt <= 0.0f || dt > 0.05f)
-            {
-                dt = 0.005f;
-            }
-
-            /*
-               MPU6050 擺法：
-               VCC 朝車尾
-               前後傾斜使用 AccY
-               前後角速度使用 GyroX
-            */
-            acc_angle = SENSOR_DIR * atan2f((float)AccY, (float)AccZ) * 57.2958f;
-
-            gyro_rate = SENSOR_DIR * (((float)GyroX / 131.0f) - gyro_x_bias);
-
-            /*
-               互補濾波。
-            */
-            angle = 0.985f * (angle + gyro_rate * dt) + 0.015f * acc_angle;
-
-            /*
-               角度誤差。
-            */
-            angle_error = angle - (target_angle + BALANCE_OFFSET_ANGLE);
-
-            /*
-               倒下保護。
-            */
-            if (angle_error > FALL_ANGLE || angle_error < -FALL_ANGLE)
-            {
-                Reset_Control_State();
-                Motor_Set(0, 0);
-                HAL_Delay(5);
-                continue;
-            }
-
-            /*
-               角度過零抑制。
-            */
-            if ((last_angle_error > 0.0f && angle_error < 0.0f) ||
-                (last_angle_error < 0.0f && angle_error > 0.0f))
-            {
-                balance_pwm_filter *= ZERO_CROSS_DAMPING;
-                left_pwm_output = (int)((float)left_pwm_output * ZERO_CROSS_DAMPING);
-                right_pwm_output = (int)((float)right_pwm_output * ZERO_CROSS_DAMPING);
-
-                angle_integral *= 0.35f;
-            }
-
-            last_angle_error = angle_error;
-
-            /*
-               角度 PID。
-               目前 KI = 0，所以實際是 PD。
-            */
-            balance_pwm = Upright_PID(angle_error, gyro_rate);
-
-            /*
-               輸出濾波。
-            */
-            balance_pwm_filter = OUTPUT_FILTER_ALPHA * balance_pwm_filter +
-                                 (1.0f - OUTPUT_FILTER_ALPHA) * (float)balance_pwm;
-
-            left_pwm_cmd = (int)balance_pwm_filter;
-            right_pwm_cmd = (int)balance_pwm_filter;
-
-            left_pwm_cmd = Limit_PWM(left_pwm_cmd, PWM_MAX);
-            right_pwm_cmd = Limit_PWM(right_pwm_cmd, PWM_MAX);
-
-            /*
-               死區。
-            */
-            if (left_pwm_cmd > -PWM_DEAD_ZONE && left_pwm_cmd < PWM_DEAD_ZONE)
-            {
-                left_pwm_cmd = 0;
-            }
-
-            if (right_pwm_cmd > -PWM_DEAD_ZONE && right_pwm_cmd < PWM_DEAD_ZONE)
-            {
-                right_pwm_cmd = 0;
-            }
-
-            /*
-               小角度啟動 PWM。
-            */
-            if (Abs_Float(angle_error) > MIN_START_ANGLE)
-            {
-                int min_pwm_dynamic = 0;
-                float abs_err = Abs_Float(angle_error);
-
-                min_pwm_dynamic = (int)(18.0f +
-                                   (PWM_MIN_START - 18.0f) *
-                                   (abs_err - MIN_START_ANGLE) / 2.5f);
-
-                if (min_pwm_dynamic > PWM_MIN_START)
-                {
-                    min_pwm_dynamic = PWM_MIN_START;
-                }
-
-                if (min_pwm_dynamic < 18)
-                {
-                    min_pwm_dynamic = 18;
-                }
-
-                if (left_pwm_cmd > 0 && left_pwm_cmd < min_pwm_dynamic)
-                {
-                    left_pwm_cmd = min_pwm_dynamic;
-                }
-                else if (left_pwm_cmd < 0 && left_pwm_cmd > -min_pwm_dynamic)
-                {
-                    left_pwm_cmd = -min_pwm_dynamic;
-                }
-
-                if (right_pwm_cmd > 0 && right_pwm_cmd < min_pwm_dynamic)
-                {
-                    right_pwm_cmd = min_pwm_dynamic;
-                }
-                else if (right_pwm_cmd < 0 && right_pwm_cmd > -min_pwm_dynamic)
-                {
-                    right_pwm_cmd = -min_pwm_dynamic;
-                }
-            }
-
-            left_pwm_cmd = Ramp_PWM(left_pwm_cmd, &left_pwm_output);
-            right_pwm_cmd = Ramp_PWM(right_pwm_cmd, &right_pwm_output);
-
-            Motor_Set(left_pwm_cmd, right_pwm_cmd);
-        }
-        else
-        {
-            Reset_Control_State();
-            Motor_Set(0, 0);
-        }
+        Motor_Set(left_pwm_cmd, right_pwm_cmd);
+        HAL_Delay(5);
     }
 }
 
-/* USER CODE BEGIN 4 */
-
-/*
-   角度 PID 控制。
-   目前 KI = 0，所以實際上是 PD。
-*/
-int Upright_PID(float error_now, float gyro_now)
+void Line_Tracking_Control(void)
 {
-    int output = 0;
+    /* PB0 = ?, PB1 = ? */
+    sensor_left_val  = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
+    sensor_right_val = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_1);
 
-    float p_out = 0.0f;
-    float i_out = 0.0f;
-    float d_out = 0.0f;
-
-    float abs_error = 0.0f;
-
-    float kp_now = UPRIGHT_KP_LOW;
-    float kd_now = UPRIGHT_KD_LOW;
-
-    angle_error_limited = Limit_Float(error_now, ANGLE_LIMIT);
-    abs_error = Abs_Float(angle_error_limited);
-
-    /*
-       小角度、中角度、大角度使用不同 Kp/Kd。
-    */
-    if (abs_error > 6.0f)
+    if (sensor_left_val == 0 && sensor_right_val == 0)
     {
-        kp_now = UPRIGHT_KP_HIGH;
-        kd_now = UPRIGHT_KD_HIGH;
+        left_pwm_cmd  = SPEED_BASE;
+        right_pwm_cmd = SPEED_BASE;
     }
-    else if (abs_error > 2.5f)
+    else if (sensor_left_val == 1 && sensor_right_val == 0)
     {
-        kp_now = UPRIGHT_KP_MID;
-        kd_now = UPRIGHT_KD_MID;
+        left_pwm_cmd  = SPEED_CORRECT_FAST;
+        right_pwm_cmd = SPEED_CORRECT_SLOW;
+    }
+    else if (sensor_left_val == 0 && sensor_right_val == 1)
+    {
+        left_pwm_cmd  = SPEED_CORRECT_SLOW;
+        right_pwm_cmd = SPEED_CORRECT_FAST;
     }
     else
     {
-        kp_now = UPRIGHT_KP_LOW;
-        kd_now = UPRIGHT_KD_LOW;
+        left_pwm_cmd  = SPEED_BLIND_WALK;
+        right_pwm_cmd = SPEED_BLIND_WALK;
     }
-
-    /*
-       如果角度正在回正，降低 P，避免救過頭。
-    */
-    if ((error_now > 0.0f && gyro_now < 0.0f) ||
-        (error_now < 0.0f && gyro_now > 0.0f))
-    {
-        kp_now *= 0.60f;
-    }
-
-    /*
-       P 項。
-    */
-    p_out = kp_now * angle_error_limited;
-
-    /*
-       I 項。
-       目前 UPRIGHT_KI = 0，所以不會作用。
-       保留程式架構，之後能站住後再慢慢加。
-    */
-    if (UPRIGHT_KI > 0.0f)
-    {
-        if (abs_error < INTEGRAL_ENABLE_ANGLE)
-        {
-            angle_integral += angle_error_limited * dt;
-        }
-        else
-        {
-            angle_integral *= 0.92f;
-        }
-
-        if (angle_integral > INTEGRAL_LIMIT)
-        {
-            angle_integral = INTEGRAL_LIMIT;
-        }
-        else if (angle_integral < -INTEGRAL_LIMIT)
-        {
-            angle_integral = -INTEGRAL_LIMIT;
-        }
-
-        i_out = UPRIGHT_KI * angle_integral;
-
-        if (i_out > I_OUTPUT_LIMIT)
-        {
-            i_out = I_OUTPUT_LIMIT;
-        }
-        else if (i_out < -I_OUTPUT_LIMIT)
-        {
-            i_out = -I_OUTPUT_LIMIT;
-        }
-    }
-    else
-    {
-        angle_integral = 0.0f;
-        i_out = 0.0f;
-    }
-
-    /*
-       D 項。
-    */
-    d_out = GYRO_DIR * kd_now * gyro_now;
-
-    if (d_out > D_OUTPUT_LIMIT)
-    {
-        d_out = D_OUTPUT_LIMIT;
-    }
-    else if (d_out < -D_OUTPUT_LIMIT)
-    {
-        d_out = -D_OUTPUT_LIMIT;
-    }
-
-    output = (int)(p_out + i_out + d_out);
-
-    /*
-       小角度限制輸出，避免瞬間過衝。
-    */
-    if (abs_error < 0.8f)
-    {
-        output = Limit_PWM(output, 70);
-    }
-    else if (abs_error < 1.8f)
-    {
-        output = Limit_PWM(output, 140);
-    }
-    else if (abs_error < 3.5f)
-    {
-        output = Limit_PWM(output, 260);
-    }
-    else if (abs_error < 6.0f)
-    {
-        output = Limit_PWM(output, 420);
-    }
-    else
-    {
-        output = Limit_PWM(output, PWM_MAX);
-    }
-
-    output = BALANCE_DIR * output;
-    output = Limit_PWM(output, PWM_MAX);
-
-    return output;
 }
 
-/*
-   清除控制狀態。
-*/
-void Reset_Control_State(void)
-{
-    left_pwm_output = 0;
-    right_pwm_output = 0;
-    balance_pwm_filter = 0.0f;
-    last_angle_error = 0.0f;
-    angle_integral = 0.0f;
-}
-
-/*
-   開機平衡角 + GyroX 零點校正。
-*/
-void Balance_Calibrate(void)
-{
-    float angle_sum = 0.0f;
-    float gyro_sum = 0.0f;
-    int count = 0;
-    int i = 0;
-
-    Motor_Set(0, 0);
-    HAL_Delay(800);
-
-    for (i = 0; i < 300; i++)
-    {
-        if (MPU6050_Read_All() == 0)
-        {
-            acc_angle = SENSOR_DIR * atan2f((float)AccY, (float)AccZ) * 57.2958f;
-
-            angle_sum += acc_angle;
-            gyro_sum += ((float)GyroX / 131.0f);
-
-            count++;
-        }
-
-        HAL_Delay(3);
-    }
-
-    if (count > 0)
-    {
-        target_angle = angle_sum / count;
-        gyro_x_bias = gyro_sum / count;
-        angle = target_angle;
-    }
-    else
-    {
-        target_angle = 0.0f;
-        gyro_x_bias = 0.0f;
-        angle = 0.0f;
-    }
-
-    Reset_Control_State();
-}
-
-/*
-   MPU6050 初始化。
-*/
-uint8_t MPU6050_Init(void)
-{
-    mpu_who_status = HAL_I2C_Mem_Read(
-        &hi2c1,
-        0x68 << 1,
-        0x75,
-        1,
-        &mpu_check,
-        1,
-        100
-    );
-
-    if (mpu_who_status != HAL_OK)
-    {
-        return 1;
-    }
-
-    if (mpu_check != 0x68)
-    {
-        return 2;
-    }
-
-    /*
-       Wake up MPU6050
-    */
-    mpu_data = 0x00;
-
-    mpu_wakeup_status = HAL_I2C_Mem_Write(
-        &hi2c1,
-        0x68 << 1,
-        0x6B,
-        1,
-        &mpu_data,
-        1,
-        100
-    );
-
-    if (mpu_wakeup_status != HAL_OK)
-    {
-        return 3;
-    }
-
-    /*
-       Gyro full scale ±250 deg/s
-    */
-    mpu_data = 0x00;
-    HAL_I2C_Mem_Write(
-        &hi2c1,
-        0x68 << 1,
-        0x1B,
-        1,
-        &mpu_data,
-        1,
-        100
-    );
-
-    /*
-       Acc full scale ±2g
-    */
-    mpu_data = 0x00;
-    HAL_I2C_Mem_Write(
-        &hi2c1,
-        0x68 << 1,
-        0x1C,
-        1,
-        &mpu_data,
-        1,
-        100
-    );
-
-    /*
-       低通濾波。
-       0x03 反應比較快。
-    */
-    mpu_data = 0x03;
-    HAL_I2C_Mem_Write(
-        &hi2c1,
-        0x68 << 1,
-        0x1A,
-        1,
-        &mpu_data,
-        1,
-        100
-    );
-
-    HAL_Delay(50);
-
-    return 0;
-}
-
-/*
-   讀取 MPU6050。
-*/
-uint8_t MPU6050_Read_All(void)
-{
-    mpu_read_status = HAL_I2C_Mem_Read(
-        &hi2c1,
-        0x68 << 1,
-        0x3B,
-        1,
-        imu_buf,
-        14,
-        100
-    );
-
-    if (mpu_read_status != HAL_OK)
-    {
-        return 1;
-    }
-
-    AccX = (int16_t)((imu_buf[0] << 8) | imu_buf[1]);
-    AccY = (int16_t)((imu_buf[2] << 8) | imu_buf[3]);
-    AccZ = (int16_t)((imu_buf[4] << 8) | imu_buf[5]);
-
-    GyroX = (int16_t)((imu_buf[8] << 8) | imu_buf[9]);
-    GyroY = (int16_t)((imu_buf[10] << 8) | imu_buf[11]);
-    GyroZ = (int16_t)((imu_buf[12] << 8) | imu_buf[13]);
-
-    return 0;
-}
-
-/*
-   馬達輸出。
-*/
 void Motor_Set(int left_pwm, int right_pwm)
 {
-    left_pwm = Limit_PWM(left_pwm * LEFT_MOTOR_DIR, 999);
-    right_pwm = Limit_PWM(right_pwm * RIGHT_MOTOR_DIR, 999);
+    left_pwm = Limit_PWM(left_pwm * LEFT_MOTOR_DIR, PWM_MAX);
+    right_pwm = Limit_PWM(right_pwm * RIGHT_MOTOR_DIR, PWM_MAX);
 
-    /*
-       左馬達：
-       PWM：TIM2_CH4 / PA3
-       DIR：PB12、PB13
-    */
-    if (left_pwm > 0)
-    {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, left_pwm);
-    }
-    else if (left_pwm < 0)
-    {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, -left_pwm);
-    }
-    else
-    {
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);
-    }
+    /* ?? PB13/PB12 */
+    if (left_pwm > 0) { HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET); HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET); }
+    else if (left_pwm < 0) { HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET); }
+    else { HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET); }
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, abs(left_pwm));
 
-    /*
-       右馬達：
-       PWM：TIM2_CH3 / PA2
-       DIR：PB14、PB15
-    */
-    if (right_pwm > 0)
-    {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, right_pwm);
-    }
-    else if (right_pwm < 0)
-    {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, -right_pwm);
-    }
-    else
-    {
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0);
-    }
+    /* ?? PB14/PB15 */
+    if (right_pwm > 0) { HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET); HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET); }
+    else if (right_pwm < 0) { HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET); }
+    else { HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET); }
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, abs(right_pwm));
 }
 
-/*
-   PWM 限制。
-*/
-int Limit_PWM(int value, int max)
-{
-    if (value > max)
-    {
-        return max;
-    }
+int Limit_PWM(int value, int max) { return (value > max) ? max : (value < -max ? -max : value); }
 
-    if (value < -max)
-    {
-        return -max;
-    }
-
-    return value;
-}
-
-/*
-   float 限制。
-*/
-float Limit_Float(float value, float max)
-{
-    if (value > max)
-    {
-        return max;
-    }
-
-    if (value < -max)
-    {
-        return -max;
-    }
-
-    return value;
-}
-
-/*
-   float 絕對值。
-*/
-float Abs_Float(float value)
-{
-    if (value >= 0.0f)
-    {
-        return value;
-    }
-
-    return -value;
-}
-
-/*
-   PWM 斜率限制。
-*/
 int Ramp_PWM(int target_pwm, int *current_pwm)
 {
-    if (target_pwm > *current_pwm + PWM_RAMP_STEP)
-    {
-        *current_pwm += PWM_RAMP_STEP;
-    }
-    else if (target_pwm < *current_pwm - PWM_RAMP_STEP)
-    {
-        *current_pwm -= PWM_RAMP_STEP;
-    }
-    else
-    {
-        *current_pwm = target_pwm;
-    }
-
+    int step = 4; // ?????,????
+    if (target_pwm > *current_pwm + step) *current_pwm += step;
+    else if (target_pwm < *current_pwm - step) *current_pwm -= step;
+    else *current_pwm = target_pwm;
     return *current_pwm;
 }
 
-/* USER CODE END 4 */
-
-/*
-   72MHz 系統時鐘
-   HSE 8MHz -> PLL x9 -> 72MHz
-*/
-void SystemClock_Config(void)
-{
-    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-
-    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-    RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-    RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
-    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-
-    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-    RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
-
-    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-    {
-        Error_Handler();
-    }
-
-    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK |
-                                  RCC_CLOCKTYPE_SYSCLK |
-                                  RCC_CLOCKTYPE_PCLK1 |
-                                  RCC_CLOCKTYPE_PCLK2;
-
-    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
-    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-
-    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
-    {
-        Error_Handler();
-    }
-}
-
-void Error_Handler(void)
-{
-    Motor_Set(0, 0);
-    __disable_irq();
-
-    while (1)
-    {
-    }
-}
-
-#ifdef USE_FULL_ASSERT
-void assert_failed(uint8_t *file, uint32_t line)
-{
-}
-#endif
+void SystemClock_Config(void) { /* ...????... */ }
+void Error_Handler(void) { while(1); }

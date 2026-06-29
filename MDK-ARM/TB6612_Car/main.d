@@ -31,5 +31,3 @@ tb6612_car\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
 tb6612_car\main.o: ../Core/Inc/i2c.h
 tb6612_car\main.o: ../Core/Inc/tim.h
 tb6612_car\main.o: ../Core/Inc/gpio.h
-tb6612_car\main.o: C:\Users\TUF\AppData\Local\Keil_v5\ARM\ARMCC\Bin\..\include\math.h
-tb6612_car\main.o: C:\Users\TUF\AppData\Local\Keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h
