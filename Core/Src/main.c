@@ -25,9 +25,9 @@ void Error_Handler(void);
 #define PWM_MAX               800
 #define PWM_MIN_LIMIT         75    // ?? ?????????????
 
-#define SPEED_BASE            180 //???)
-#define SPEED_CORRECT_FAST    250
-#define SPEED_CORRECT_SLOW    -50//(???????)
+#define SPEED_BASE            200
+#define SPEED_CORRECT_FAST    300
+#define SPEED_CORRECT_SLOW    -200
 #define SPEED_BLIND_WALK      100   // ????????
 
 /* USER CODE END PD */
